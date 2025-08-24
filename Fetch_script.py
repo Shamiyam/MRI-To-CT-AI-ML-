@@ -45,8 +45,9 @@ def safe_extract_tar(tar: tarfile.TarFile, path: Path) -> None:
 # It handles , , , and other common formats, using  for security.
 # Unknown formats are skipped with a warning, and errors during extraction are caught and logged.
 # It prints progress and completion messages to keep the user informed.
+#Updated this function so that if the files already exist, it does not go for the extraction.
 
-def extract_archives(archives: List[Path], out_dir: Path) -> None:
+"""def extract_archives(archives: List[Path], out_dir: Path) -> None:
     if not archives:
         print("[INFO] Nothing to extract.")
         return
@@ -65,7 +66,56 @@ def extract_archives(archives: List[Path], out_dir: Path) -> None:
             print(f"[INFO] Extracted: {arc.name}")
         except Exception as e:
             print(f"[ERROR] Failed to extract {arc.name}: {e}")
+    print("[INFO] Extraction complete.")"""
+
+# Replaced my old extract_archives function with this one
+
+def extract_archives(archives: List[Path], out_dir: Path) -> None:
+    if not archives:
+        print("[INFO] Nothing to extract.")
+        return
+    print(f"[INFO] Extracting {len(archives)} archive(s) into {out_dir}")
+    for arc in archives:
+        # Get the expected name of the output folder (e.g., "Task1.zip" -> "Task1")
+        output_folder_name = arc.stem.split('.')[0]
+        expected_dir = out_dir / output_folder_name
+
+        # === NEW LOGIC: Check if the directory already exists ===
+        if expected_dir.exists() and expected_dir.is_dir():
+            print(f"[INFO] Skipping extraction for {arc.name}, directory '{output_folder_name}' already exists.")
+            continue
+        # === END OF NEW LOGIC ===
+        
+        try:
+            if arc.suffix.lower() == ".zip":
+                with zipfile.ZipFile(arc, "r") as zf:
+                    zf.extractall(out_dir)
+            elif arc.suffixes[-2:] == [".tar", ".gz"] or arc.suffix.lower() in [".tgz", ".tar", ".tbz2", ".txz"]:
+                with tarfile.open(arc, "r:*") as tf:
+                    safe_extract_tar(tf, out_dir)
+            else:
+                print(f"[WARN] Skipping unknown archive type: {arc.name}")
+                continue
+            print(f"[INFO] Extracted: {arc.name}")
+        except Exception as e:
+            print(f"[ERROR] Failed to extract {arc.name}: {e}")
     print("[INFO] Extraction complete.")
+
+
+
+# Prints a header showing top-level contents of root.
+# Iterates over root, prefixing each entry with [D] for directories or [F] for files.
+# Uses root.rglob()  to count all .nii /nii.gz and.dcm  files in the subtree.
+# Prints a summary line with total NIfTI and DICOM file counts.
+
+def summarize_tree(root: Path) -> None:
+    print(f"\n[INFO] Top-level contents of {root}:")
+    for entry in sorted(root.iterdir()):
+        print(f"  [{'D' if entry.is_dir() else 'F'}] {entry.name}")
+    nii = sum(1 for _ in root.rglob("*.nii")) + sum(1 for _ in root.rglob("*.nii.gz"))
+    dcm = sum(1 for _ in root.rglob("*.dcm"))
+    print(f"\n[INFO] Counts -> NIfTI: {nii}, DICOM: {dcm}")
+
 
 
 
@@ -130,7 +180,13 @@ def quick_peek(root: Path) -> None:
 # Uses gdown.download_folder to fetch all files into the temp folder, then scans for archive files
 # Moves each found archive from temp to the output directory (removing any existing ones), cleans up temp, and returns the moved archive list
 
-def download_from_drive_folder(folder_id: str, dst: Path) -> List[Path]:
+""" ***Initially I tried to directly download the zip files on Google colab using folder id but there was some issue.
+I did check the folder ID, made the folder public and set the cookies to True but it was not working.
+Moreover I felt that this would take a lot of time even if fixed as I would have to download and run it everytime and the data is too large
+The best way was to first extract the folder inside the Google Drive and then share the path directly for use.*** """
+
+
+"""def download_from_drive_folder(folder_id: str, dst: Path) -> List[Path]:
     _lazy_imports()
     print(f"[INFO] Downloading Google Drive folder {folder_id} into {dst}")
     ensure_dir(dst)
@@ -159,7 +215,35 @@ def download_from_drive_folder(folder_id: str, dst: Path) -> List[Path]:
         shutil.move(str(a), str(target))
         moved.append(target)
     shutil.rmtree(tmp, ignore_errors=True)
-    return moved
+    return moved"""
+
+#New Function for getting the files from drive using file path
+def download_from_drive_folder(folder_id: str, dst: Path) -> List[Path]:
+    print(f"[INFO] Copying archives from mounted Google Drive folder into {dst}")
+    ensure_dir(dst)
+    
+    # Hardcode your mounted folder path here (adjust if needed based on !ls /content/drive/MyDrive/)
+    mounted_folder = Path('/content/drive/MyDrive/MRI_CT_Translation-Capstone Project Data')  #-After making all the changes I was still getting message that no files exist in the folder and guess what those tiny details like a space versus an underscore are often the hardest bugs to find. They hide in plain sight. I was using this name-MRI_CT_Translation-Capstone_Project_Data
+    
+    if not mounted_folder.exists():
+        print(f"[ERROR] Mounted folder {mounted_folder} does not exist. Ensure Drive is mounted and path is correct.")
+        return []
+    
+    archives: List[Path] = []
+    for file in mounted_folder.iterdir():
+        if file.is_file() and file.suffix.lower() in ('.zip', '.tar.gz', '.tgz', '.tar.bz2', '.tar.xz', '.tar'):
+            target = dst / file.name
+            if target.exists():
+                print(f"[INFO] Skipping existing file: {file.name}")
+            else:
+                print(f"[INFO] Copying {file.name} to {target}")
+                shutil.copy(str(file), str(target))
+            archives.append(target)
+    
+    if not archives:
+        print("[WARN] No archives found in the mounted folder.")
+    
+    return archives
 
 
 
