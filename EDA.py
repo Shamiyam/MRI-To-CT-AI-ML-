@@ -52,18 +52,32 @@ def is_nifti(p: Path) -> bool:
     n = p.name.lower()
     return n.endswith(".nii") or n.endswith(".nii.gz")
 
-
-def classify_modality(p: Path) -> str:
+#This included only MRI_CT pair so had to modify it.
+"""def classify_modality(p: Path) -> str:
     n = p.name.lower()
     if any(k in n for k in ["seg", "mask", "label"]):
         return "ignore"
     if "cbct" in n:
-        return "ct"  # treat CBCT as CT target
+        return "ct"  # treat CBCT as CT target (This is not what we wanted)
     if "ct" in n:
         return "ct"
     if any(k in n for k in ["mri", "mr", "t1", "t2", "flair"]):
         return "mr"
-    return "unknown"
+    return "unknown" """
+
+#Modified version that would include CBCT as well-
+def classify_modality(p: Path) -> str:
+    """Classifies modality as mr, ct, cbct, or ignore."""
+    n = p.name.lower()
+    if any(k in n for k in ["seg", "mask", "label"]):
+        return "ignore"
+    if "cbct" in n:
+        return "cbct"  # Now correctly identified as its own type
+    if "ct" in n:
+        return "ct"
+    if any(k in n for k in ["mri", "mr", "t1", "t2", "flair"]):
+        return "mr"
+    return "unknown" 
 
 
 def find_patient_dirs(data_root: Path) -> List[Path]:
@@ -183,8 +197,8 @@ def almost_equal(a: Tuple[float, float, float], b: Tuple[float, float, float], a
 # - Appends a dict with keys task, patient_id, mr_path, and ct_path (empty string if missing).
 # Return value: a list of these dicts, one per patient directory.
 
-
-def collect_pairs(data_root: Path) -> List[Dict]:
+# Old collect pairs did not consider CBCT so we edited and added new one that included it.
+"""def collect_pairs(data_root: Path) -> List[Dict]:
     patient_dirs = find_patient_dirs(data_root)
     rows: List[Dict] = []
     for pdir in patient_dirs:
@@ -207,13 +221,53 @@ def collect_pairs(data_root: Path) -> List[Dict]:
                 ct_path=str(ct) if ct else "",
             )
         )
+    return rows """
+
+def collect_pairs(data_root: Path) -> List[Dict]:
+    """
+    Finds MR-CT or CBCT-CT pairs.
+    """
+    patient_dirs = find_patient_dirs(data_root)
+    rows: List[Dict] = []
+    for pdir in patient_dirs:
+        task = pdir.parts[len(data_root.parts)] if len(pdir.parts) > len(data_root.parts) else ""
+        patient_id = pdir.name
+        niis = [f for f in pdir.glob("*.nii*") if is_nifti(f)]
+        if not niis:
+            continue
+
+        # Classify all available files
+        mr_files = [f for f in niis if classify_modality(f) == "mr"]
+        ct_files = [f for f in niis if classify_modality(f) == "ct"]
+        cbct_files = [f for f in niis if classify_modality(f) == "cbct"]
+
+        ct = pick_first(ct_files)
+        source, source_modality = (None, None)
+
+        # Prioritize MR as the source, but fall back to CBCT
+        if mr_files:
+            source = pick_first(mr_files, prefer=["t1", "mr", "mri"])
+            source_modality = "MR"
+        elif cbct_files:
+            source = pick_first(cbct_files)
+            source_modality = "CBCT"
+
+        rows.append(
+            dict(
+                task=task,
+                patient_id=patient_id,
+                source_path=str(source) if source else "",
+                ct_path=str(ct) if ct else "",
+                source_modality=source_modality if source_modality else "",
+            )
+        )
     return rows
 
 
 
 
 
-def eda(data_root: Path, out_dir: Path, max_previews: int = 16) -> Path:
+"""def eda(data_root: Path, out_dir: Path, max_previews: int = 16) -> Path:
     # The eda function takes:
     # - data_root: folder containing MR/CT files
     # - out_dir: where we’ll save CSV, JSON, and previews
@@ -338,6 +392,114 @@ def eda(data_root: Path, out_dir: Path, max_previews: int = 16) -> Path:
 
 
     # Print a neat console summary before returning the CSV path
+    print("\n[SUMMARY]")
+    for k, v in summary.items():
+        print(f"- {k}: {v}")
+    print(f"- CSV: {csv_path}")
+    print(f"- Previews: {previews_dir} (up to {max_previews})")
+    return csv_path """
+
+
+#New EDA with minimum changes so that CBCT_pair is included as well
+
+def eda(data_root: Path, out_dir: Path, max_previews: int = 16) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    previews_dir = out_dir / "previews"
+    meta_rows: List[Dict] = []
+    
+    pair_rows = collect_pairs(data_root)
+    
+    # UPDATED: Counters for the new logic
+    ok_pairs = 0
+    missing_source = 0
+    missing_ct = 0
+    affine_mismatch = 0
+
+    for i, row in enumerate(tqdm(pair_rows, desc="Scanning patients")):
+        # CHANGED: from mr_path to source_path
+        source_path = row["source_path"]
+        ct_path = row["ct_path"]
+        
+        if not source_path:
+            missing_source += 1 # CHANGED: counter name
+            continue
+        if not ct_path:
+            missing_ct += 1
+            continue
+
+        try:
+            # CHANGED: All 'mr_' variables renamed to 'source_'
+            source_img, source_shape, source_spacing, source_affine, source_axes, source_dtype = load_header(Path(source_path))
+            ct_img, ct_shape, ct_spacing, ct_affine, ct_axes, ct_dtype = load_header(Path(ct_path))
+
+            aligned_shape = source_shape == ct_shape
+            aligned_spacing = almost_equal(source_spacing, ct_spacing, atol=1e-3)
+            aligned_affine = np.allclose(source_affine, ct_affine, atol=1e-3)
+            if not (aligned_shape and aligned_spacing and aligned_affine):
+                affine_mismatch += 1
+
+            source_cs = center_slice_2d(source_img)
+            ct_cs = center_slice_2d(ct_img)
+            source_p1, source_p99 = float(np.percentile(source_cs, 1)), float(np.percentile(source_cs, 99))
+            ct_p1, ct_p99 = float(np.percentile(ct_cs, 1)), float(np.percentile(ct_cs, 99))
+            
+            # UPDATED: Storing the new columns in the final CSV
+            meta_rows.append(
+                dict(
+                    task=row["task"],
+                    patient_id=row["patient_id"],
+                    source_modality=row["source_modality"], # ADDED: new column
+                    source_path=source_path,               # CHANGED: variable name
+                    ct_path=ct_path,
+                    source_shape=str(source_shape),        # CHANGED: variable name
+                    ct_shape=str(ct_shape),
+                    # ... all other columns remain, just with 'source_' instead of 'mr_'
+                    source_spacing_x=source_spacing[0],
+                    source_spacing_y=source_spacing[1],
+                    source_spacing_z=source_spacing[2],
+                    ct_spacing_x=ct_spacing[0],
+                    ct_spacing_y=ct_spacing[1],
+                    ct_spacing_z=ct_spacing[2],
+                    source_axes=source_axes,
+                    ct_axes=ct_axes,
+                    source_dtype=source_dtype,
+                    ct_dtype=ct_dtype,
+                    aligned_shape=bool(aligned_shape),
+                    aligned_spacing=bool(aligned_spacing),
+                    aligned_affine=bool(aligned_affine),
+                    source_p1=source_p1,
+                    source_p99=source_p99,
+                    ct_p1=ct_p1,
+                    ct_p99=ct_p99,
+                )
+            )
+            
+            if i < max_previews:
+                out_png = previews_dir / f"{row['task']}_{row['patient_id']}_{row['source_modality']}.png"
+                make_preview(source_img, ct_img, out_png) # CHANGED: pass source_img
+
+            ok_pairs += 1
+
+        except Exception as e:
+            meta_rows.append(dict(task=row["task"], patient_id=row["patient_id"], error=str(e)))
+
+    meta_df = pd.DataFrame(meta_rows)
+    csv_path = out_dir / "synthrad_metadata_all.csv" # New filename
+    meta_df.to_csv(csv_path, index=False)
+    
+    # UPDATED: The summary dictionary
+    summary = dict(
+        data_root=str(data_root),
+        patients_scanned=len(pair_rows),
+        ok_pairs=ok_pairs,
+        missing_source=missing_source,
+        missing_ct=missing_ct,
+        affine_or_shape_mismatch=affine_mismatch,
+        previews_written=min(max_previews, ok_pairs),
+    )
+    with open(out_dir / "summary_all.json", "w") as f:
+        json.dump(summary, f, indent=2)
+
     print("\n[SUMMARY]")
     for k, v in summary.items():
         print(f"- {k}: {v}")
