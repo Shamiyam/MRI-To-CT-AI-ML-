@@ -324,9 +324,12 @@ def main():
     proc_df = pd.DataFrame(processed)
     csv_path = out_dir / "processed_metadata.csv"
     proc_df.to_csv(csv_path, index=False)
-    
-    # Check for errors that were returned by the workers
-    errors = proc_df["error"].notna().sum()
+
+    # Robustly check for an 'error' column before accessing it
+    if "error" in proc_df.columns:
+        errors = proc_df["error"].notna().sum()
+    else:
+        errors = 0 # If the column doesn't exist, there were no errors.
 
     summary = dict(
         # ... (your summary dictionary logic remains the same) ...
