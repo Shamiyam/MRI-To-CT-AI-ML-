@@ -178,6 +178,15 @@ def main():
 
 
     model = make_model().to(device)
+
+    # Add the ability to load the weights from the first Training so that when we move to CBCT we can use it.
+    #  This requires a small and simple modification.
+    if args.resume_from:
+        ckpt = torch.load(args.resume_from, map_location=device)
+        # Be careful to load only the model's state_dict
+        model.load_state_dict(ckpt["model"] if "model" in ckpt else ckpt)
+        print(f"[INFO] Resumed training from checkpoint: {args.resume_from}")
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
     scaler = torch.amp.GradScaler(device='cuda', enabled=args.amp)
     loss_l1 = nn.L1Loss()
