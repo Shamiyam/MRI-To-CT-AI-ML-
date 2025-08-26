@@ -158,6 +158,7 @@ def main():
     ap.add_argument("--amp", action="store_true")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--save-dir", type=Path, default=Path("outputs/experiments"))
+    ap.add_argument("--resume-from", type=Path, default=None, help="Path to a .pt checkpoint to continue training from.")
     args = ap.parse_args()
 
     set_determinism(seed=args.seed)
