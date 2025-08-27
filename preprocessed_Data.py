@@ -175,22 +175,37 @@ def process_pair(row: Dict, out_dir: Path, out_shape=(128, 128, 128)) -> Dict:
         src_path = Path(get_src_path(row))
         ct_path = Path(row["ct_path"])
 
-        # ... (all your existing processing logic remains exactly the same) ...
+        # Load and reorient images
         src_img = as_ras(load_nii(src_path))
         ct_img = as_ras(load_nii(ct_path))
+        
+        # Extract data and spacing
         src = np.asarray(src_img.get_fdata(dtype=np.float32))
         ct = np.asarray(ct_img.get_fdata(dtype=np.float32))
         src_sp = spacing_from(src_img)
         ct_sp = spacing_from(ct_img)
+        
+        # Resample to 1mm iso
         src_r = resample_iso1(src, src_sp, order=1)
         ct_r = resample_iso1(ct, ct_sp, order=1)
-        if src_mod in ("mr", "cbct"):
-            src_n = normalize_mr_cbct(src_r)
+
+        # --- THIS IS THE CORRECTED & CORRECTLY PLACED SECTION ---
+        # Normalize based on modality
+        if src_mod == "mr":
+            src_n = normalize_mr_cbct(src_r, p_low=1.0, p_high=99.0)
+        elif src_mod == "cbct":
+            src_n = normalize_mr_cbct(src_r, p_low=0.5, p_high=99.5)
         else:
-            src_n = normalize_ct(src_r)
+            src_n = normalize_ct(src_r) # Fallback for other types
+        
         ct_n = normalize_ct(ct_r)
+        # --- END OF CORRECTED SECTION ---
+
+        # Crop/pad to uniform shape
         src_f = center_crop_or_pad(src_n, out_shape)
         ct_f = center_crop_or_pad(ct_n, out_shape)
+
+        # Save with standard naming
         base = f"{task}_{pid}".strip("_")
         src_name = f"{base}_src-{src_mod}.nii.gz"
         tgt_name = f"{base}_tgt-ct.nii.gz"
