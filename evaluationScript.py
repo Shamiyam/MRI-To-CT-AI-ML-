@@ -205,11 +205,12 @@ def main():
     # Aggregates
     def agg(df):
         psnr_finite = df.loc[np.isfinite(df["psnr"]), "psnr"]
+        
         return {
             "N": len(df),
             "MAE_mean": float(df["mae"].mean()),
             "MAE_std": float(df["mae"].std(ddof=0)),
-            "PSNR_mean": float(df["psnr"].mean()),
+            "PSNR_mean": float(psnr_finite.mean()),
             "SSIM_mean": float(df["ssim"].mean()),
         }
 
