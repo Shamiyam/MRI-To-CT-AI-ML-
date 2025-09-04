@@ -67,6 +67,38 @@ def make_generator():
         num_res_units=2, norm="INSTANCE",
     )
 
+# Add this new helper class to your script
+
+class LPIPS_3D(nn.Module):
+    """
+    Wrapper to compute LPIPS loss slice-wise on 3D volumes.
+    """
+    def __init__(self, device):
+        super().__init__()
+        # Use the standard 2D LPIPS model
+        self.lpips_model = lpips.LPIPS(net='alex', spatial=False).to(device)
+
+    def forward(self, pred_vol, tgt_vol):
+        # LPIPS expects images in [-1, 1] range, but our data is [0, 1].
+        # We scale it here for the loss calculation.
+        pred_scaled = pred_vol * 2.0 - 1.0
+        tgt_scaled = tgt_vol * 2.0 - 1.0
+
+        # Get the depth dimension (assumes shape is B, C, D, H, W)
+        depth = pred_scaled.shape[2]
+
+        total_loss = 0.0
+        # Loop through each slice in the depth dimension
+        for d in range(depth):
+            # Extract the 2D slice
+            pred_slice = pred_scaled[:, :, d, :, :]
+            tgt_slice = tgt_scaled[:, :, d, :, :]
+
+            # The 2D LPIPS model expects 3 channels. We repeat our single channel.
+            total_loss += self.lpips_model(pred_slice.repeat(1,3,1,1), tgt_slice.repeat(1,3,1,1)).mean()
+
+        # Return the average loss over all slices
+        return total_loss / depth
 
 def make_discriminator(in_channels=2, base_ch=32, spectral_norm: bool = False):
     """3D PatchGAN discriminator with optional spectral norm."""
@@ -124,7 +156,7 @@ def train_one_epoch_gan(
 ):
     """Runs a single adversarial training epoch."""
     generator.train(); discriminator.train()
-    meter = {"loss_D": 0.0, "loss_G": 0.0, "loss_G_gan": 0.0, "loss_G_l1": 0.0, "loss_G_tv": 0.0}
+    meter = {"loss_D": 0.0, "loss_G": 0.0, "loss_G_gan": 0.0, "loss_G_l1": 0.0, "loss_G_tv": 0.0, "loss_G_lpips": 0.0}
     n_samples = 0
 
     for batch in loader:
@@ -160,7 +192,7 @@ def train_one_epoch_gan(
                 # LPIPS: 1. Calculate the new perceptual loss
     if lpips_loss is not None:
         # LPIPS expects 3 channels, so we repeat the single channel dimension
-        loss_G_lpips = lpips_loss(fake_ct_for_G.repeat(1,3,1,1,1), tgt.repeat(1,3,1,1,1)).mean()
+       loss_G_lpips = lpips_loss(fake_ct_for_G, tgt)
     else:
         loss_G_lpips = torch.zeros((), device=device) 
         loss_G = loss_G_gan + lambda_l1 * loss_G_l1 + loss_G_tv + (lambda_lpips * loss_G_lpips)
@@ -248,7 +280,7 @@ def main():
     optimizer_D = torch.optim.AdamW(discriminator.parameters(), lr=args.lrD, betas=(0.5, 0.999), weight_decay=1e-5)
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
     l1_loss, gan_loss = nn.L1Loss(), nn.BCEWithLogitsLoss()
-    lpips_loss = lpips.LPIPS(net='alex', spatial=True).to(device) if args.lambda_lpips > 0 else None
+    lpips_loss = LPIPS_3D(device) if args.lambda_lpips > 0 else None
     
     # Resume/warm-start
     best_mae = float("inf"); start_epoch = 1
@@ -295,7 +327,7 @@ def main():
 
         print(f"Epoch {epoch:03d}/{args.max_epochs} | "
               f"D:{train_m['loss_D']:.4f} G:{train_m['loss_G']:.4f} "
-              f"(GAN:{train_m['loss_G_gan']:.4f} L1:{train_m['loss_G_l1']:.4f} TV:{train_m['loss_G_tv']:.5f}LPIPS:{train_m['loss_G_lpips']:.4f}) | "
+              f"(GAN:{train_m['loss_G_gan']:.4f} L1:{train_m['loss_G_l1']:.4f} TV:{train_m['loss_G_tv']:.5f} LPIPS:{train_m['loss_G_lpips']:.4f}) | "
               f"val_MAE={val_mae:.4f} | val_SSIM={val_ssim:.4f} | {dt:.1f}s")
 
         # Save best generator (also alias as 'model' for evaluator)
