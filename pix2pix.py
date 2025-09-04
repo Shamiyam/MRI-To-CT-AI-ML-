@@ -281,7 +281,7 @@ def main():
         t0 = time.time()
         train_m = train_one_epoch_gan(
             generator, discriminator, train_loader, optimizer_G, optimizer_D, scaler, device,
-            l1_loss, gan_loss, lpips_loss lambda_l1=args.lambda_l1,lambda_lpips=args.lambda_lpips, amp=args.amp,
+            l1_loss, gan_loss, lpips_loss, lambda_l1=args.lambda_l1,lambda_lpips=args.lambda_lpips, amp=args.amp,
             tv_w=args.tv_weight, use_hinge=args.hinge, ema=ema
         )
 
