@@ -11,6 +11,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
+import lpips
 
 from monai.data import CacheDataset
 from monai.transforms import (
@@ -119,7 +120,7 @@ class EMA:
 
 def train_one_epoch_gan(
     generator, discriminator, loader, optim_G, optim_D, scaler, device,
-    l1_loss, gan_loss, lambda_l1=100.0, amp=True, tv_w: float = 0.0, use_hinge: bool = False, ema: EMA = None
+    l1_loss, gan_loss,lpips_loss, lambda_l1=100.0,lambda_lpips=0.1, amp=True, tv_w: float = 0.0, use_hinge: bool = False, ema: EMA = None
 ):
     """Runs a single adversarial training epoch."""
     generator.train(); discriminator.train()
@@ -156,7 +157,13 @@ def train_one_epoch_gan(
                 loss_G_gan = gan_loss(pred_fake_for_G, torch.ones_like(pred_fake_for_G))
             loss_G_l1 = l1_loss(fake_ct_for_G, tgt)
             loss_G_tv = tv_w * tv_loss(fake_ct_for_G) if tv_w > 0 else torch.zeros((), device=device)
-            loss_G = loss_G_gan + lambda_l1 * loss_G_l1 + loss_G_tv
+                # LPIPS: 1. Calculate the new perceptual loss
+    if lpips_loss is not None:
+        # LPIPS expects 3 channels, so we repeat the single channel dimension
+        loss_G_lpips = lpips_loss(fake_ct_for_G.repeat(1,3,1,1,1), tgt.repeat(1,3,1,1,1)).mean()
+    else:
+        loss_G_lpips = torch.zeros((), device=device) 
+        loss_G = loss_G_gan + lambda_l1 * loss_G_l1 + loss_G_tv + (lambda_lpips * loss_G_lpips)
         scaler.scale(loss_G).backward(); scaler.step(optim_G); scaler.update()
 
         if ema is not None:
@@ -167,7 +174,7 @@ def train_one_epoch_gan(
         meter["loss_G_gan"] += loss_G_gan.item() * B
         meter["loss_G_l1"] += loss_G_l1.item() * B
         meter["loss_G_tv"] += float(loss_G_tv.item()) * B
-
+        meter["loss_G_lpips"] += loss_G_lpips.item() * B
     for k in meter: meter[k] /= max(1, n_samples)
     return meter
 
@@ -219,6 +226,7 @@ def main():
     ap.add_argument("--hinge", action="store_true")
     ap.add_argument("--ema", action="store_true")
     ap.add_argument("--config-dump", action="store_true")
+    ap.add_argument("--lambda-lpips", type=float, default=0.0, help="Weight for LPIPS loss. Set > 0 to enable.")
     args = ap.parse_args()
 
     set_determinism(seed=args.seed)
@@ -240,7 +248,8 @@ def main():
     optimizer_D = torch.optim.AdamW(discriminator.parameters(), lr=args.lrD, betas=(0.5, 0.999), weight_decay=1e-5)
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
     l1_loss, gan_loss = nn.L1Loss(), nn.BCEWithLogitsLoss()
-
+    lpips_loss = lpips.LPIPS(net='alex', spatial=True).to(device) if args.lambda_lpips > 0 else None
+    
     # Resume/warm-start
     best_mae = float("inf"); start_epoch = 1
     if args.resume_from and args.resume_from.exists():
@@ -272,7 +281,7 @@ def main():
         t0 = time.time()
         train_m = train_one_epoch_gan(
             generator, discriminator, train_loader, optimizer_G, optimizer_D, scaler, device,
-            l1_loss, gan_loss, lambda_l1=args.lambda_l1, amp=args.amp,
+            l1_loss, gan_loss, lpips_loss lambda_l1=args.lambda_l1,lambda_lpips=args.lambda_lpips, amp=args.amp,
             tv_w=args.tv_weight, use_hinge=args.hinge, ema=ema
         )
 
@@ -286,7 +295,7 @@ def main():
 
         print(f"Epoch {epoch:03d}/{args.max_epochs} | "
               f"D:{train_m['loss_D']:.4f} G:{train_m['loss_G']:.4f} "
-              f"(GAN:{train_m['loss_G_gan']:.4f} L1:{train_m['loss_G_l1']:.4f} TV:{train_m['loss_G_tv']:.5f}) | "
+              f"(GAN:{train_m['loss_G_gan']:.4f} L1:{train_m['loss_G_l1']:.4f} TV:{train_m['loss_G_tv']:.5f}LPIPS:{train_m['loss_G_lpips']:.4f}) | "
               f"val_MAE={val_mae:.4f} | val_SSIM={val_ssim:.4f} | {dt:.1f}s")
 
         # Save best generator (also alias as 'model' for evaluator)
