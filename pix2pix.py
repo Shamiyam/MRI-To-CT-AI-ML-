@@ -188,7 +188,8 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2, pin_memory=True)
 
     generator = make_generator().to(device); discriminator = make_discriminator(in_channels=2, base_ch=args.disc_base_ch, spectral_norm=args.spectral_norm).to(device)
-    optimizer_G = torch.optim.AdamW(generator.parameters(), lr=args.lrG, betas=(0.5, 0.999)); optimizer_D = torch.optim.AdamW(discriminator.parameters(), lr=args.lrD, betas=(0.5, 0.999))
+    optimizer_G = torch.optim.SGD(generator.parameters(), lr=args.lrG, momentum=0.9)
+    optimizer_D = torch.optim.SGD(discriminator.parameters(), lr=args.lrD, momentum=0.9)
     scheduler_G = ReduceLROnPlateau(optimizer_G, 'min', factor=0.5, patience=10)
     scheduler_D = ReduceLROnPlateau(optimizer_D, 'min', factor=0.5, patience=10)
     scaler = torch.amp.GradScaler('cuda', enabled=args.amp)
