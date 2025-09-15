@@ -142,7 +142,14 @@ def main():
     # Model + checkpoint
     model = make_model().to(device)
     ckpt = torch.load(args.checkpoint, map_location=device)
-    state_dict = ckpt["model"] if "model" in ckpt else ckpt
+    #state_dict = ckpt["model"] if "model" in ckpt else ckpt -When evaluating 3D unet
+    # More robustly find the state dictionary within the checkpoint
+    if "generator" in ckpt:
+        state_dict = ckpt["generator"]
+    elif "model" in ckpt:
+        state_dict = ckpt["model"]
+    else:
+        state_dict = ckpt
     model.load_state_dict(state_dict)
     model.eval()
 
