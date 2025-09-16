@@ -20,7 +20,7 @@ CHECKPOINT_PATH_BASELINE_MR = Path("drive/MyDrive/MRI_CT Project-Processed_Files
 CHECKPOINT_PATH_BASELINE_CBCT = Path("drive/MyDrive/MRI_CT Project-Processed_Files Data/experiments/unet3d_finetuned_on_cbct/checkpoints/best.pt")
 CHECKPOINT_PATH_GAN_MR = Path("drive/MyDrive/MRI_CT Project-Processed_Files Data/experiments_Phase2_pix2pix/pix2pix3d_mr_ct_final_SGD/checkpoints/best.pt")
 # --- FUTURE: Once you train your CBCT GAN, update this placeholder path ---
-CHECKPOINT_PATH_GAN_CBCT = Path("drive/MyDrive/path/to/your/best_cbct_gan_model.pt") 
+CHECKPOINT_PATH_GAN_CBCT = Path("ddrive/MyDrive/MRI_CT Project-Processed_Files Data/experiments_Phase2_pix2pix/pix2pix3d_cbct_ct_final_SGD/checkpoints/best.pt") 
 
 # --- Create a dictionary to hold our models with clear keys ---
 MODELS = {}
